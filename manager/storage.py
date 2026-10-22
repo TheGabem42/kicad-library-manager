@@ -527,7 +527,16 @@ class Library:
                 f.write(data)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(temp, path)
+            try:
+                os.replace(temp, path)
+            except PermissionError:
+                # Windows refuses to replace a file another process has open, and
+                # KiCad keeps the parts database open through ODBC while it runs.
+                # Write the new database into the existing file through SQLite's
+                # own locking instead, so saving works without closing KiCad.
+                if path.suffix != ".sqlite" or not path.is_file():
+                    raise
+                _overwrite_sqlite(path, data)
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)
@@ -684,6 +693,22 @@ class Library:
             f"{APPDATA}/fp-lib-table": table("fp_lib_table", {**fp_entries, **category_entries}),
             **generated,
         }
+
+
+def _overwrite_sqlite(path, data):
+    """Copy a serialized SQLite database into an existing (possibly open) database file."""
+    source = sqlite3.connect(":memory:")
+    target = sqlite3.connect(path, timeout=15)
+    try:
+        source.deserialize(data)
+        source.backup(target)
+    except sqlite3.OperationalError as exc:
+        raise PermissionError(
+            "KiCad is busy reading the parts database; try saving again in a moment"
+        ) from exc
+    finally:
+        target.close()
+        source.close()
 
 
 def create_library(path, install_runtime=False):

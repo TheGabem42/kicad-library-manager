@@ -28,6 +28,10 @@ def main():
             json.dumps(export(Library(args.library), args.input, args.output), indent=2)
         )
     else:
+        if args.library:
+            from manager.conflicts import check
+
+            check(args.library)
         from manager.server import run
 
         run(args.library, args.port, not args.no_browser, desktop=args.desktop, parent_pid=args.parent_pid)

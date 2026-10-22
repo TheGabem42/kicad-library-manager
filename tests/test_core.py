@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -258,6 +259,31 @@ class LibraryCase(unittest.TestCase):
                 s.commit(self.lib, r["token"])
         self.assertEqual((self.lib.appdata / "components.csv").read_bytes(), before)
         self.assertFalse((self.lib.root / r["part"]["SymbolFile"]).exists())
+        self.assertFalse((self.lib.appdata / "pending-transaction.json").exists())
+
+    def test_save_while_database_is_open_elsewhere(self):
+        # Windows can't replace a file another process (KiCad via ODBC) has open.
+        s, d = self.connector()
+        r = s.prepare(self.lib, d)
+        real_replace = os.replace
+
+        def windows_replace(src, dst):
+            if str(dst).endswith("parts.sqlite"):
+                raise PermissionError(13, "Access is denied", str(dst))
+            return real_replace(src, dst)
+
+        with patch("manager.storage.os.replace", side_effect=windows_replace):
+            saved = s.commit(self.lib, r["token"])
+        conn = sqlite3.connect(self.lib.appdata / "parts.sqlite")
+        try:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM components WHERE ID=?", (saved["ID"],)
+                ).fetchone()[0],
+                1,
+            )
+        finally:
+            conn.close()
         self.assertFalse((self.lib.appdata / "pending-transaction.json").exists())
 
     def test_zip_traversal_and_duplicate_members_do_not_add_files(self):
@@ -590,6 +616,23 @@ class LibraryCase(unittest.TestCase):
         )
         self.assertTrue(kicad.setup_status(self.lib, config)["connected"])
         self.assertTrue(list(config.glob("*.bak")))
+
+    def test_setup_accepts_null_kicad_path_variables(self):
+        # A fresh KiCad (seen on Windows) writes "vars": null when no path variables exist.
+        for environment in ({"vars": None}, None):
+            config = self.base / f"null-vars-{environment is None}"
+            config.mkdir()
+            (config / "kicad_common.json").write_text(
+                json.dumps({"environment": environment, "unrelated": 1})
+            )
+            self.assertFalse(kicad.setup_status(self.lib, config)["connected"])
+            kicad.connect(self.lib, config=config, check_running=False)
+            data = json.loads((config / "kicad_common.json").read_text())
+            self.assertEqual(
+                data["environment"]["vars"]["MYCO_PARTS_DIR"], str(self.lib.appdata)
+            )
+            self.assertEqual(data["unrelated"], 1)
+            self.assertTrue(kicad.setup_status(self.lib, config)["connected"])
 
     def test_supplier_bespoke_clipboard(self):
         result = supplier.extract(

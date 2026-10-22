@@ -97,7 +97,8 @@ def setup_status(lib, config=None):
             data = json.loads((config / "kicad_common.json").read_text())
     except (OSError, ValueError) as exc:
         error = str(exc)
-    active = data.get("environment", {}).get("vars", {}).get("MYCO_PARTS_DIR", "")
+    # KiCad writes "vars": null (and may write "environment": null) when no path variables exist.
+    active = ((data.get("environment") or {}).get("vars") or {}).get("MYCO_PARTS_DIR", "")
     return dict(
         cli=cli_path(),
         config=str(config),
@@ -122,7 +123,11 @@ def connect(lib, config=None, switch=False, check_running=True):
         )
     common = config / "kicad_common.json"
     data = json.loads(common.read_text()) if common.exists() else {}
-    vars_ = data.setdefault("environment", {}).setdefault("vars", {})
+    if not isinstance(data.get("environment"), dict):
+        data["environment"] = {}
+    if not isinstance(data["environment"].get("vars"), dict):
+        data["environment"]["vars"] = {}
+    vars_ = data["environment"]["vars"]
     current = vars_.get("MYCO_PARTS_DIR")
     if current and current != str(lib.appdata) and not switch:
         raise ValueError(

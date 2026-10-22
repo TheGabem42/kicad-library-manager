@@ -1851,3 +1851,16 @@ fieldset.import-controls {
     display: block;
   }
 }
+.danger {
+  background: #fff;
+  border: 1px solid #e3b4a6;
+  color: #a23b1f;
+  padding: 11px 15px;
+  border-radius: 6px;
+  font-weight: 550;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.danger:hover:not(:disabled) {
+  background: #fbede5;
+}

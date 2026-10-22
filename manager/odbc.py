@@ -25,19 +25,34 @@ def connection_string(root):
     return expanded
 
 
+def manager_candidates():
+    """ODBC driver managers to try, most specific first."""
+    if os.name == "nt":
+        return ["odbc32.dll"]
+    found = [
+        "/Applications/KiCad/KiCad.app/Contents/Frameworks/libodbc.2.dylib",
+        ctypes.util.find_library("odbc"),
+        "/opt/homebrew/lib/libodbc.2.dylib",
+        "/usr/local/lib/libodbc.2.dylib",
+    ]
+    return [m for m in dict.fromkeys(found) if m and (Path(m).exists() or "/" not in m)]
+
+
+def load_manager(candidates):
+    """Load the first ODBC manager that loads. KiCad.app's bundled libodbc depends
+    on @rpath libraries that only resolve inside KiCad, so outside KiCad it can
+    fail to load; Homebrew's unixODBC (installed with sqliteodbc) is equivalent."""
+    errors = []
+    for manager in candidates:
+        try:
+            return manager, (C.WinDLL(manager) if os.name == "nt" else C.CDLL(manager))
+        except OSError as exc:
+            errors.append(f"{manager}: {str(exc).splitlines()[0]}")
+    raise RuntimeError("No ODBC driver manager could be loaded" + (": " + "; ".join(errors) if errors else ""))
+
+
 def check_odbc(root, driver=None, manager=None):
-    if not manager:
-        bundled = Path(
-            "/Applications/KiCad/KiCad.app/Contents/Frameworks/libodbc.2.dylib"
-        )
-        manager = (
-            str(bundled)
-            if bundled.exists()
-            else ("odbc32.dll" if os.name == "nt" else ctypes.util.find_library("odbc"))
-        )
-    if not manager:
-        raise RuntimeError("No ODBC driver manager found")
-    dll = C.WinDLL(manager) if os.name == "nt" else C.CDLL(manager)
+    manager, dll = load_manager([manager] if manager else manager_candidates())
     handle = C.c_void_p
     short = C.c_short
     integer = C.c_int
